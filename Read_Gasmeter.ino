@@ -22,12 +22,15 @@
 int top = 0;                            //highest magnetic field registered from meter (Ga)Initialize low if using autoDetectMaxMin
 int bottom = 0;                         //lowest magnetic field registered from meter (Ga) Initialize high if using autoDetectMaxMin
 int tol = 50;
+int initstep = 25;                      // Init stepsize to measure difference in Y movement
+int rise_count = 0;
 unsigned long SEND_FREQUENCY = 30000;   // Minimum time between send (in milliseconds). We don't want to spam the gateway.
 
 bool metric = true;                     //sets units to Metric or English TODO: move to void setup()
 bool pcReceived = false;                //whether or not the gw has sent us a pulse count
 bool autoDetect = false;                //true if the program is auto detecting Top and Bottom
 bool rising = true;                     //whether or not a pulse has been triggered
+bool oldrising = true;                  //old status of rising and falling
 bool safe = false;                      //whether or not it is safe to switch directions
 unsigned long pulsecount = 0;           //total number of pulses measured ever
 unsigned long oldPulseCount = 0;        //old total
@@ -42,9 +45,12 @@ double oldAvgFlow = 0;                  //previous average flow
 int y = 0;                              //magnetic field reading
 int oldy = 0;                           //previous magnetic field reading
 int spikey = 0;
+int ystep = 0;
 int newTop = -9000;                         //potential new Top
 int newBottom = 9000;                  //potential new Bottom
-int totDividers = 9;                   //Number of dividers
+int puls_index = 0;
+int totDividers = 10;                   //Number of dividers
+int pulses [9];           //Array of puls triggers
 int increment = 0;                      //space b/w dividers
 int counter = 0;                        //used to count pulses over periods longer than SEND_FREQUENCY
 int topAddr = 0;                        //address of TOP in FRAM
@@ -76,7 +82,7 @@ void setup(){
   //newBottom = readInt(bottomAddr);
   //updateBounds();
   
-  //WARNING: MAKE SURE GAS IS RUNNING ON FIRST RUNNING OF THIS PROGRAM!!!
+  //WARNING: IT IS PREFERABLE THAT GAS IS RUNNING ON FIRST RUNNING OF THIS PROGRAM!!!
   init_top_bottom();
 
   y = readMag();
@@ -127,6 +133,25 @@ void receive(const MyMessage &message)
 }
 
 void updateBounds(){
+    int i = 0;
+    //recalculate increment to match new top and bottom
+    increment = (newTop - newBottom) / totDividers;
+    for i = 0 to totDividers {
+      array[i] = newBottom + increment*i
+    }
+    
+    //display new bounds
+    Serial.println("NEW BOUNDARIES SET:");
+    Serial.print("Top = ");
+    Serial.println(top);
+    Serial.print("Bottom = ");
+    Serial.println(bottom);
+    Serial.print("Increment = ");
+    Serial.println(increment);
+  }
+}
+
+void updateBounds_old(){
   if(((top + tol) != newTop) && ((bottom - tol) != newBottom)){   //check if anything has actually changed
     //lock in Top and Bottom
     top = newTop - tol;
@@ -214,65 +239,116 @@ int readMag(){
     Serial.print("  Last Total Pulse Count Sent to GW: ");
     Serial.println(oldPulseCount);
   }
-    if(abs(y - spikey) < 800){
+    if(abs(y - spikey) < 800){    // filter out sudden spikes in the measurements
       spikey = y;
       return y;
     }
     else{
       return spikey;
-      }
+    }
     
 }
 
 void init_top_bottom (){
-  if(top == 0 && bottom == 0){    
-    autoDetect = true;
-    newTop = -9000;
-    newBottom = 9000;
-    
-    //determine max and min magnetic field strength over a few minutes
-    Serial.println("FRAM has been cleared. Auto-detecting max and min magnetic field reading.");
-    Serial.println("WARNING: MAKE SURE GAS IS RUNNING!!");
-    lastSend = millis();
-    
-    while((millis() - lastSend) < 120000){
-      delay(500);
-      y = readMag();
-          if(abs(y - oldy) < tol / 2){
-      detectMaxMin();
-    }
-      oldy=y;
-
-      //display details
-      Serial.print("y: ");
-      Serial.print(y);
-      Serial.print("  Top: ");
-      Serial.print(newTop);
-      Serial.print("  Bottom: ");
-      Serial.print(newBottom);
-      unsigned long remainingTime = 120000 + lastSend - millis();
-      Serial.print("  Time remaining: ");
-      Serial.print(remainingTime / 60000);
-      Serial.print(":");
-      remainingTime = (remainingTime % 60000) / 1000;
-      if(remainingTime >= 10){
-        Serial.println(remainingTime);
-      }
-      else{
-        Serial.print("0");
-        Serial.println(remainingTime);
-      }
-    }
+  y = readMag();
+  oldy = readMag();
+  int i = 0;
+  int changes = 0;
   
-  
-    updateBounds();
-    autoDetect = false;
+  while(abs(y - oldy) < initstep){  // Wait until difference b/w y and oldy is greater than the initstep size
+    y = readMag();
   }
+  oldrising = (y > oldy);           // Detect whether magnetic field is rising or falling
+  oldy = y;
+  
+  while (changes < 4) {               // Stop the loop after 4 changes of rising and falling
+    while(abs(y - oldy) < initstep){  // Wait until difference b/w y and oldy is greater than the initstep size
+      y = readMag();
+    }
+    rising = (y > oldy);
+    Serial.println(rising ? "Magnetic field is rising" : "Magnetic field is falling");
+    if (rising != oldrising) {        // If there is a change in direction from rising to falling start the counter
+      i += 1;
+      Serial.println ("First change detected!");  
+    } 
+    else {                            // No change in direction reset the counter
+      i = 0;                          // Reset values direction is the same
+      oldrising = rising;
+    }
+    if (i == 2) {                       // If the change has been detected two times in a row then it must be a true change
+      changes += 1;                   // Increase the number of changes
+      Serial.print ("Second change detected! Total number of changes in amplitude is now: ");
+      Serial.print(changes);
+    }
+    detectMaxMin();
+    oldy = y;
+    
+    //display details
+    Serial.print("y: ");
+    Serial.print(y);
+    Serial.print("  Top: ");
+    Serial.print(newTop);
+    Serial.print("  Bottom: ");
+    Serial.print(newBottom);
+    Serial.print("  Number of changes detected: ");
+    Serial.print(changes);
+    Serial.print(":");
+  }
+  oldy = y;               // exit the init fase and update the boundery_table
+  oldrising = rising;
+  updateBounds();
+  autoDetect = false;
 }
 
 void Read_magnetic_pulse(){
+    y = readMag();      // Read new value for y
+    if(abs(oldy - y) > increment/4){        // See if there has been sufficient movement of Y compared to the old Y value
+      rising = (y > oldy);
+      oldy = y;
+      Serial.println(rising ? "Magnetic field is rising" : "Magnetic field is falling");
+      if (rising != oldrising) {        // If there is a change in direction from rising to falling start the counter
+        rise_count += 1;  
+        Serial.println ("First change detected!");
+      } 
+      else {                            // No change in direction reset the counter
+        rise_count = 0;                 // Reset values direction is the same
+        oldrising = rising;
+        check_puls_step();
+      }
+      if (rise_count == 2) {            // If the change has been detected two times in a row then it must be a true change
+        Serial.println ("Second change detected!");
+        //update newTop and newBottom
+        if ((!rising && abs(y-newTop) >= tol) || (rising && abs(y-newBottom) >= tol)){ 
+          detectMaxMin();        
+        }
+        if (rising) {
+          puls_index = 1;
+        }
+        else{
+          puls_index = totDividers -2;
+        }
+      }
+    }
+}
+
+void check_puls_step(){
+  if (rising && ystep <= y) {
+    if (puls_index < totDividers-1) {
+      puls_index += 1;
+      pulsecount ++;
+    } else puls_index = totDividers -1;
+  } 
+  else if (!rising && y <= ystep) {
+    if (puls_index > 0){
+      puls_index += -1;
+      pulsecount ++; 
+    } else puls_index = 0;
+  }
+  ystep = pulses[puls_index];
+}
+
+void Read_magnetic_pulse_old(){
   while(millis() - lastSend < SEND_FREQUENCY){
-    delay(100);
     //check if the signal has significantly increased/decreased
     if(abs(oldy - y) > increment){
       pulsecount ++;
@@ -301,6 +377,7 @@ void Read_magnetic_pulse(){
   }
   lastSend = millis();
 }
+
 
 void Calculate_flow(){
   //shift all flow array elements to the right by 1, ignore last element
