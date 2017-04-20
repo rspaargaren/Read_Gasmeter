@@ -53,6 +53,7 @@ int totDividers = 10;                   //Number of dividers
 int pulses [9];           //Array of puls triggers
 int increment = 0;                      //space b/w dividers
 int counter = 0;                        //used to count pulses over periods longer than SEND_FREQUENCY
+int pulsecounter = 0;
 int topAddr = 0;                        //address of TOP in FRAM
 int bottomAddr = topAddr + 2;           //address of BOTTOM in FRAM
 
@@ -85,13 +86,13 @@ void setup(){
   //WARNING: IT IS PREFERABLE THAT GAS IS RUNNING ON FIRST RUNNING OF THIS PROGRAM!!!
   init_top_bottom();
 
-  y = readMag();
-  oldy = readMag();
-  while(abs(y - oldy) < increment / 2){ //wait until difference b/w y and oldy is greater than half an increment
-    y = readMag();
-  }
-  rising = (y > oldy);
-  Serial.println(rising ? "Magnetic field is rising" : "Magnetic field is falling");
+  //y = readMag();
+  //oldy = readMag();
+  //while(abs(y - oldy) < increment / 2){ //wait until difference b/w y and oldy is greater than half an increment
+  //  y = readMag();
+  //}
+  //rising = (y > oldy);
+  //Serial.println(rising ? "Magnetic field is rising" : "Magnetic field is falling");
 }
 
 void presentation()
@@ -109,11 +110,22 @@ void loop(){
     request(CHILD_ID, V_VAR1);
     return;
   }
+  
   //detecting magnetic pulses - variable boundary method
   Read_magnetic_pulse();
-  Calculate_flow();
-  //send updated cumulative pulse count and volume data, if necessary
-  Pulse_Volume();
+  
+  if ((millis() - lastSend >= SEND_FREQUENCY)||(pulsecounter == totDividers)){
+    Calculate_flow();
+    pulsecount = oldPulseCount + pulsecounter;
+    if ( pulsecounter == totDividers) {
+      oldPulseCount = pulsecount;
+      pulsecounter = 0;
+    }
+    //send updated cumulative pulse count and volume data, if necessary
+    Pulse_Volume();
+  }
+  
+  
 }
 
 void receive(const MyMessage &message)
@@ -127,8 +139,8 @@ void receive(const MyMessage &message)
     pcReceived = true;
     lastSend = millis();
     //set magnetic field starting point
-    oldy = readMag();
-    y = readMag();
+    //oldy = readMag();
+    //y = readMag();
   }
 }
 
@@ -136,9 +148,14 @@ void updateBounds(){
     int i = 0;
     //recalculate increment to match new top and bottom
     increment = (newTop - newBottom) / totDividers;
-    for i = 0 to totDividers {
-      array[i] = newBottom + increment*i
+
+    for(int idx = 0; idx < totDividers - 1; idx++){
+      pulses[idx] = newBottom + increment*idx;
+      Serial.print(pulses[idx]);
+      Serial.print("|");
     }
+    Serial.print(pulses[totDividers - 1]);
+    Serial.println("]");
     
     //display new bounds
     Serial.println("NEW BOUNDARIES SET:");
@@ -148,7 +165,7 @@ void updateBounds(){
     Serial.println(bottom);
     Serial.print("Increment = ");
     Serial.println(increment);
-  }
+  
 }
 
 void updateBounds_old(){
@@ -319,7 +336,8 @@ void Read_magnetic_pulse(){
         Serial.println ("Second change detected!");
         //update newTop and newBottom
         if ((!rising && abs(y-newTop) >= tol) || (rising && abs(y-newBottom) >= tol)){ 
-          detectMaxMin();        
+          detectMaxMin();
+          updateBounds();        
         }
         if (rising) {
           puls_index = 1;
@@ -327,24 +345,37 @@ void Read_magnetic_pulse(){
         else{
           puls_index = totDividers -2;
         }
+        ystep = pulses[puls_index];
+        pulsecounter = totDividers;
       }
     }
 }
 
 void check_puls_step(){
-  if (rising && ystep <= y) {
+    Serial.print("y: ");
+    Serial.print(y);
+    Serial.print(rising ? "  Rising, " : "  Falling, ");
+    Serial.print("next pulse at: ");
+    Serial.print(ystep);
+  if (rising && ystep <= y) {           // Check if line is rising and if value of Y is bigger than the current step
+    Serial.println("Puls is triggered!");
     if (puls_index < totDividers-1) {
       puls_index += 1;
-      pulsecount ++;
+      pulsecounter ++;
     } else puls_index = totDividers -1;
   } 
   else if (!rising && y <= ystep) {
+    Serial.println("Puls is triggered!");
     if (puls_index > 0){
       puls_index += -1;
-      pulsecount ++; 
+      pulsecounter ++; 
     } else puls_index = 0;
   }
   ystep = pulses[puls_index];
+    Serial.print ("The current pulse index is: ");
+    Serial.print (puls_index);
+    Serial.println ("The current pulsecount is: ");
+    Serial.print (pulsecounter);
 }
 
 void Read_magnetic_pulse_old(){
@@ -385,7 +416,7 @@ void Calculate_flow(){
     flow[idx] = flow[idx - 1];
   }
   //calculate newest flow reading and store it as first element in flow array
-  flow[0] = (double)(pulsecount - oldPulseCount) * (double)vpp * 60000.0 / (double)SEND_FREQUENCY;
+  flow[0] = (double)(pulsecount - oldPulseCount) * (double)vpp * 60000.0 / (double)(millis() - lastSend);
   //display flow array state
   Serial.print("Flow Array State: [");
   for(int idx = 0; idx < len - 1; idx++){
@@ -418,13 +449,13 @@ void Pulse_Volume(){
     send(lastCounterMsg.set(pulsecount));
     send(volumeMsg.set(volume, 3));
 
-    counter += (pulsecount - oldPulseCount);      //update counter
-    if(counter >= ((totDividers + 1) * 2)){
-      updateBounds();                 //update bounds if at least 1 cycle has been read
-      counter = 0;                    //reset counter
-    }
+    //counter += (pulsecount - oldPulseCount);      //update counter
+    //if(counter >= ((totDividers + 1) * 2)){
+    //  updateBounds();                 //update bounds if at least 1 cycle has been read
+    //  counter = 0;                    //reset counter
+    //}
 
-    oldPulseCount = pulsecount;              //update old total
+    //oldPulseCount = pulsecount;              //update old total
   }
 }
 
