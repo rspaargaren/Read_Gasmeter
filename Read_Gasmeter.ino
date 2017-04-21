@@ -115,7 +115,7 @@ void loop(){
   Read_magnetic_pulse();
   
   if ((millis() - lastSend >= SEND_FREQUENCY)||(pulsecounter == totDividers)){
-    Calculate_flow();
+    //Calculate_flow();
     pulsecount = oldPulseCount + pulsecounter;
     if ( pulsecounter == totDividers) {
       oldPulseCount = pulsecount;
@@ -243,20 +243,20 @@ int readMag(){
     y |= Wire.read(); //Y lsb
   }
 
-
+  autoDetect = false;
   if(!autoDetect){
     //show real-time magnetic field, pulse count, and pulse count total
     Serial.print("y: ");
-    Serial.print(y);
-    Serial.print(rising ? "  Rising, " : "  Falling, ");
-    Serial.print("next pulse at: ");
-    Serial.print(rising ? oldy + increment : oldy - increment);
-    Serial.print("  Current Number of Pulses: ");
-    Serial.print(pulsecount - oldPulseCount);
-    Serial.print("  Last Total Pulse Count Sent to GW: ");
-    Serial.println(oldPulseCount);
+
+    //Serial.print(rising ? "  Rising, " : "  Falling, ");
+    //Serial.print("next pulse at: ");
+    //Serial.print(rising ? oldy + increment : oldy - increment);
+    //Serial.print("  Current Number of Pulses: ");
+    //Serial.print(pulsecount - oldPulseCount);
+    //Serial.print("  Last Total Pulse Count Sent to GW: ");
+    //Serial.println(oldPulseCount);
   }
-    if(abs(y - spikey) < 800){    // filter out sudden spikes in the measurements
+    if(abs(y - spikey) < 500){    // filter out sudden spikes in the measurements
       spikey = y;
       return y;
     }
@@ -272,8 +272,9 @@ void init_top_bottom (){
   int i = 0;
   int changes = 0;
   
-  while(abs(y - oldy) < initstep){  // Wait until difference b/w y and oldy is greater than the initstep size
+  while(abs(y - oldy) < 100000000){  // Wait until difference b/w y and oldy is greater than the initstep size
     y = readMag();
+    Serial.println(y);
   }
   oldrising = (y > oldy);           // Detect whether magnetic field is rising or falling
   oldy = y;
@@ -319,7 +320,7 @@ void init_top_bottom (){
 
 void Read_magnetic_pulse(){
     y = readMag();      // Read new value for y
-    if(abs(oldy - y) > increment/4){        // See if there has been sufficient movement of Y compared to the old Y value
+    if(abs(oldy - y) > increment/2){        // See if there has been sufficient movement of Y compared to the old Y value
       rising = (y > oldy);
       oldy = y;
       Serial.println(rising ? "Magnetic field is rising" : "Magnetic field is falling");
