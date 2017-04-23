@@ -14,6 +14,7 @@
 #include <MySensors.h>                  
 #include <Wire.h>                       //I2C communications library
 //#include <Adafruit_FRAM_I2C.h>          //Adafruit FRAM memory library
+//#include <Filter.h>
 
 #define CHILD_ID 1                      //ID of the sensor child
 #define SLEEP_MODE false                //prevent sensor from sleeping
@@ -31,9 +32,11 @@ bool pcReceived = false;                //whether or not the gw has sent us a pu
 bool autoDetect = false;                //true if the program is auto detecting Top and Bottom
 bool rising = true;                     //whether or not a pulse has been triggered
 bool oldrising = true;                  //old status of rising and falling
-bool safe = false;                      //whether or not it is safe to switch directions
+//bool safe = false;                      //whether or not it is safe to switch directions
 unsigned long pulsecount = 0;           //total number of pulses measured ever
 unsigned long oldPulseCount = 0;        //old total
+unsigned long SendPulseCount = 0;        //old total
+
 //double vpp = metric ? 0.160891193181 : 0.00568124219857;//Volume of gas per pulse
 double vpp = metric ? 0.00005 : 0.00005; //Volume of gas per pulse
 unsigned long lastSend = 0;             //time since last transmission - msec
@@ -44,22 +47,23 @@ double avgFlow = 0;                     //average of all elements in flow array
 double oldAvgFlow = 0;                  //previous average flow
 int y = 0;                              //magnetic field reading
 int oldy = 0;                           //previous magnetic field reading
-int spikey = 0;
+int spike_y = 999;
 int ystep = 0;
 int newTop = -9000;                         //potential new Top
 int newBottom = 9000;                  //potential new Bottom
 int puls_index = 0;
 int totDividers = 10;                   //Number of dividers
-int pulses [9];           //Array of puls triggers
+int pulses [10];           //Array of puls triggers
 int increment = 0;                      //space b/w dividers
-int counter = 0;                        //used to count pulses over periods longer than SEND_FREQUENCY
+//int counter = 0;                        //used to count pulses over periods longer than SEND_FREQUENCY
 int pulsecounter = 0;
-int topAddr = 0;                        //address of TOP in FRAM
-int bottomAddr = topAddr + 2;           //address of BOTTOM in FRAM
+//int topAddr = 0;                        //address of TOP in FRAM
+//int bottomAddr = topAddr + 2;           //address of BOTTOM in FRAM
 
 MyMessage flowMsg(CHILD_ID,V_FLOW);
 MyMessage volumeMsg(CHILD_ID,V_VOLUME);
 MyMessage lastCounterMsg(CHILD_ID,V_VAR1);
+//ExponentialFilter<long> ADCFilter(10, 0);
 
 //Adafruit_FRAM_I2C fram = Adafruit_FRAM_I2C();
 
@@ -78,21 +82,16 @@ void setup(){
   Wire.write(0x00); //continuous measurement mode
   Wire.endTransmission();
 
-  //get Top and Bottom from FRAM. addresses are hard-coded seeing as there are only 2
-  //newTop = readInt(topAddr);
-  //newBottom = readInt(bottomAddr);
-  //updateBounds();
+  newTop = 565;
+  newBottom = -302;
+  updateBounds();
   
   //WARNING: IT IS PREFERABLE THAT GAS IS RUNNING ON FIRST RUNNING OF THIS PROGRAM!!!
-  init_top_bottom();
-
-  //y = readMag();
-  //oldy = readMag();
-  //while(abs(y - oldy) < increment / 2){ //wait until difference b/w y and oldy is greater than half an increment
-  //  y = readMag();
-  //}
-  //rising = (y > oldy);
-  //Serial.println(rising ? "Magnetic field is rising" : "Magnetic field is falling");
+  //init_top_bottom();
+  y = readMag();
+  oldy=y;
+  oldrising = false;
+  puls_index = 0;
 }
 
 void presentation()
@@ -108,6 +107,7 @@ void loop(){
   if (!pcReceived) {
     //Last Pulsecount not yet received from controller, request it again
     request(CHILD_ID, V_VAR1);
+    delay(2000); // Wait for the gateway to respond
     return;
   }
   
@@ -116,16 +116,15 @@ void loop(){
   
   if ((millis() - lastSend >= SEND_FREQUENCY)||(pulsecounter == totDividers)){
     //Calculate_flow();
+    Serial.println ("Time to send the values to the Gateway!");
     pulsecount = oldPulseCount + pulsecounter;
     if ( pulsecounter == totDividers) {
       oldPulseCount = pulsecount;
       pulsecounter = 0;
     }
     //send updated cumulative pulse count and volume data, if necessary
-    Pulse_Volume();
+  //  Pulse_Volume();
   }
-  
-  
 }
 
 void receive(const MyMessage &message)
@@ -145,59 +144,14 @@ void receive(const MyMessage &message)
 }
 
 void updateBounds(){
-    int i = 0;
-    //recalculate increment to match new top and bottom
     increment = (newTop - newBottom) / totDividers;
-
-    for(int idx = 0; idx < totDividers - 1; idx++){
+    Serial.print ("THE TABLE WITH DIVIDERS IS: | ");
+    for(int idx = 0; idx <= totDividers; idx++){
       pulses[idx] = newBottom + increment*idx;
       Serial.print(pulses[idx]);
-      Serial.print("|");
+      Serial.print(" | ");
     }
-    Serial.print(pulses[totDividers - 1]);
-    Serial.println("]");
-    
-    //display new bounds
-    Serial.println("NEW BOUNDARIES SET:");
-    Serial.print("Top = ");
-    Serial.println(top);
-    Serial.print("Bottom = ");
-    Serial.println(bottom);
-    Serial.print("Increment = ");
-    Serial.println(increment);
-  
-}
-
-void updateBounds_old(){
-  if(((top + tol) != newTop) && ((bottom - tol) != newBottom)){   //check if anything has actually changed
-    //lock in Top and Bottom
-    top = newTop - tol;
-    bottom = newBottom + tol;
-    
-    //recalculate increment to match new top and bottom
-    increment = (top - bottom) / totDividers;
-  
-    //reset newTop and newBottom
-    //newTop = -9000;
-    //newBottom = 9000;
-  
-    //store updated Top and Bottom in FRAM
-//    writeInt(topAddr,top);
-//    writeInt(bottomAddr,bottom);
-
-    //reset newTop and newBottom
-    newTop = -9000;
-    newBottom = 9000;
-  
-    //display new bounds
-    Serial.println("NEW BOUNDARIES SET:");
-    Serial.print("Top = ");
-    Serial.println(top);
-    Serial.print("Bottom = ");
-    Serial.println(bottom);
-    Serial.print("Increment = ");
-    Serial.println(increment);
-  }
+    Serial.println("");  
 }
 
 void detectMaxMin(){
@@ -209,24 +163,8 @@ void detectMaxMin(){
   }
 }
 
-//void writeInt(int addr, int val){       //write an int value to memory
-//  byte b = highByte(val);
-//  fram.write8(addr,b);
-//  b = lowByte(val);
-//  fram.write8(addr + 1,b);
-//}
-
-//int readInt(int addr){                  //read an int value from memory
-//  int result = 0;
-//  result += (int)fram.read8(addr);
- // result = result << 8;
- // result += (int)fram.read8(addr + 1);
- // return result;
-//}
-
 int readMag(){
   int x = 0, z = 0;
-  
   //Tell the HMC5883 where to begin reading data
   Wire.beginTransmission(address);
   Wire.write(0x03); //select register 3, X MSB register - was called Wire.send but the compiler had an error and said to rename to to Wire.write
@@ -242,85 +180,115 @@ int readMag(){
     y = Wire.read()<<8; //Y msb
     y |= Wire.read(); //Y lsb
   }
-
-  autoDetect = false;
-  if(!autoDetect){
-    //show real-time magnetic field, pulse count, and pulse count total
-    Serial.print("y: ");
-
-    //Serial.print(rising ? "  Rising, " : "  Falling, ");
-    //Serial.print("next pulse at: ");
-    //Serial.print(rising ? oldy + increment : oldy - increment);
-    //Serial.print("  Current Number of Pulses: ");
-    //Serial.print(pulsecount - oldPulseCount);
-    //Serial.print("  Last Total Pulse Count Sent to GW: ");
-    //Serial.println(oldPulseCount);
+  Serial.print("WITHIN THE READMAG LOOP RAW Y: ");
+  Serial.print(y);
+  if (spike_y == 999) {
+    Serial.println("First run spike_value is still 999");
+    spike_y = y; // For the first run set value for Spike_Y
+    //ADCFilter.SetCurrent();
   }
-    if(abs(y - spikey) < 500){    // filter out sudden spikes in the measurements
-      spikey = y;
-      return y;
-    }
-    else{
-      return spikey;
-    }
-    
+
+  if (abs(y - spike_y) >= 100) { // The step for the new value is to big compared to previous measurement. Discard this measurement
+    Serial.print("WITHIN THE READMAG LOOP HI VALUE Y DETECTED COMPARED TO Y-SPIKE ");
+    Serial.println(y - spike_y);
+    y = spike_y;
+  } else {
+    spike_y = y; // The value is within bounds. Reset Spike_y to current value
+  }
+    Serial.print (" THE LOOP THE RETURNED Y: ");
+    Serial.println (y);
+  return y;
 }
 
 void init_top_bottom (){
   y = readMag();
   oldy = readMag();
+  //Serial.print ("START OF THE INIT LOOP - Y IS: ");
+  //Serial.print (y);
+  //Serial.print ("AND Y_OLD IS: ");
+  //Serial.println (oldy);
   int i = 0;
   int changes = 0;
-  
-  while(abs(y - oldy) < 100000000){  // Wait until difference b/w y and oldy is greater than the initstep size
-    y = readMag();
-    Serial.println(y);
+   while(abs(y - oldy) < 15){  // Wait until difference b/w y and oldy is greater than the initstep size
+     delay(1000);
+     y = readMag();
+//     Serial.print ("WITHIN THE INIT LOOP DETECTING RISING OR FALLING Y: ");
+//     Serial.print (y);
+//     Serial.print (" AND OLDY ");
+//     Serial.print (oldy);
+//     Serial.print (" AND THE DIFFERENCE HAS TO BE BIGGER THAN 15 TO EXIT THIS LOOP ");
+//     Serial.println (abs(y - oldy));
   }
   oldrising = (y > oldy);           // Detect whether magnetic field is rising or falling
   oldy = y;
-  
+  Serial.print("LOOP RISING OR FALLING ENDED. THE DIRECTION IS: ");
+  Serial.println(rising ? "RISING" : "FALLING");
+  //Serial.println("Start detection of 4 peaks.");
   while (changes < 4) {               // Stop the loop after 4 changes of rising and falling
     while(abs(y - oldy) < initstep){  // Wait until difference b/w y and oldy is greater than the initstep size
+      delay(500);
       y = readMag();
+  //    Serial.print (" IN THE LOOP OF DETECTING PEAKS TO BE SMALLER THAN INIT STEP Y: ");
+  //    Serial.print (y);
+  //    Serial.print ( " AND OLD_Y IS: ");
+  //    Serial.print (oldy);
+  //    Serial.print ( " THE DIFFERENCE : ");
+  //    Serial.print (y - oldy);
+  //    Serial.print ( " HAS TO BE SMALLER THAN: ");
+  //    Serial.println (initstep);
     }
     rising = (y > oldy);
-    Serial.println(rising ? "Magnetic field is rising" : "Magnetic field is falling");
+   // Serial.print ("THE LOOP FOR DETECTING PEAKS IS ENDED.");
+    Serial.println(oldrising ? "The previous Magnetic field was rising" : "The previous Magnetic field was falling");
+    Serial.println(rising ? "Magnetic field is rising" : "Magnetic field is falling");    
     if (rising != oldrising) {        // If there is a change in direction from rising to falling start the counter
       i += 1;
-      Serial.println ("First change detected!");  
+      Serial.print ("First change detected in direction is detection the counter i is now: ");
+      Serial.println (i);
     } 
     else {                            // No change in direction reset the counter
+      Serial.println("The previous rise is the same as the current. RESET the counter and the oldfield");
       i = 0;                          // Reset values direction is the same
       oldrising = rising;
     }
     if (i == 2) {                       // If the change has been detected two times in a row then it must be a true change
       changes += 1;                   // Increase the number of changes
       Serial.print ("Second change detected! Total number of changes in amplitude is now: ");
-      Serial.print(changes);
+      Serial.println(changes);
+      i = 0;
+      oldrising = rising;
+     // Serial.println ("The counter has been reset and the old rising");
     }
     detectMaxMin();
     oldy = y;
     
     //display details
-    Serial.print("y: ");
+    Serial.print("We are at the end of the loop y: ");
     Serial.print(y);
     Serial.print("  Top: ");
     Serial.print(newTop);
     Serial.print("  Bottom: ");
     Serial.print(newBottom);
     Serial.print("  Number of changes detected: ");
-    Serial.print(changes);
-    Serial.print(":");
+    Serial.println(changes);
   }
+  Serial.println("4 CHANGES DETECTED, END INIT LOOP!");
   oldy = y;               // exit the init fase and update the boundery_table
   oldrising = rising;
+  detectMaxMin();
   updateBounds();
-  autoDetect = false;
+  if (rising)  {
+    ystep = pulses [1];  
+  }
+  else {
+    ystep = pulses[totDividers-1];
+  }
 }
 
 void Read_magnetic_pulse(){
     y = readMag();      // Read new value for y
-    if(abs(oldy - y) > increment/2){        // See if there has been sufficient movement of Y compared to the old Y value
+    delay(1000);
+    if(abs(oldy - y) > increment/4){        // See if there has been sufficient movement of Y compared to the old Y value
       rising = (y > oldy);
       oldy = y;
       Serial.println(rising ? "Magnetic field is rising" : "Magnetic field is falling");
@@ -344,10 +312,13 @@ void Read_magnetic_pulse(){
           puls_index = 1;
         }
         else{
-          puls_index = totDividers -2;
+          puls_index = totDividers -1;
         }
         ystep = pulses[puls_index];
+        //Serial.print ("THE NEW ystep target is: ");
+        //Serial.println (ystep);
         pulsecounter = totDividers;
+        oldrising=rising;
       }
     }
 }
@@ -357,59 +328,29 @@ void check_puls_step(){
     Serial.print(y);
     Serial.print(rising ? "  Rising, " : "  Falling, ");
     Serial.print("next pulse at: ");
-    Serial.print(ystep);
-  if (rising && ystep <= y) {           // Check if line is rising and if value of Y is bigger than the current step
-    Serial.println("Puls is triggered!");
-    if (puls_index < totDividers-1) {
+    Serial.println(ystep);
+  if (rising && y >= ystep) {           // Check if line is rising and if value of Y is bigger than the current step
+    Serial.println("Puls is triggered! The field is rising");
+    if (puls_index < totDividers) {
       puls_index += 1;
       pulsecounter ++;
-    } else puls_index = totDividers -1;
+    } else puls_index = totDividers;
   } 
   else if (!rising && y <= ystep) {
-    Serial.println("Puls is triggered!");
+    Serial.println("Puls is triggered! The field is falling");
     if (puls_index > 0){
       puls_index += -1;
       pulsecounter ++; 
     } else puls_index = 0;
   }
-  ystep = pulses[puls_index];
+    ystep = pulses[puls_index];
     Serial.print ("The current pulse index is: ");
     Serial.print (puls_index);
-    Serial.println ("The current pulsecount is: ");
+    Serial.print (" The current pulsecount is: ");
     Serial.print (pulsecounter);
+    Serial.print (" The next step is at: ");
+    Serial.println (ystep);
 }
-
-void Read_magnetic_pulse_old(){
-  while(millis() - lastSend < SEND_FREQUENCY){
-    //check if the signal has significantly increased/decreased
-    if(abs(oldy - y) > increment){
-      pulsecount ++;
-      //increment or decrement oldy by one increment based on direction
-      oldy += rising ? increment : -1 * increment;     
-      safe = false;             //reset safe now that oldy has updated     
-    }
-    //check if the signal has recently switched directions
-    else if(safe){                  //first make sure y has moved a significant distance from oldy
-      if((rising && y <= oldy) || (!rising && y >= oldy)){
-        pulsecount ++;              //add one extra pulse
-        rising = !rising;           //update direction
-        safe = false;
-       }
-    }
-    
-    //take another reading
-    y = readMag();
-    //check if y has moved a significant distance from oldy
-    if(abs(y - oldy) > tol / 2){
-      safe = true;
-    }
-    
-    //update newTop and newBottom
-    detectMaxMin();                
-  }
-  lastSend = millis();
-}
-
 
 void Calculate_flow(){
   //shift all flow array elements to the right by 1, ignore last element
@@ -442,21 +383,13 @@ void Calculate_flow(){
 }
 
 void Pulse_Volume(){
-  if(pulsecount != oldPulseCount){    
+  if(pulsecount != SendPulseCount){    
     //calculate volume
     volume = (double)pulsecount * (double)vpp / (metric ? 1000.0 : 1);
-
     //send pulse count and volume data to gw
     send(lastCounterMsg.set(pulsecount));
     send(volumeMsg.set(volume, 3));
-
-    //counter += (pulsecount - oldPulseCount);      //update counter
-    //if(counter >= ((totDividers + 1) * 2)){
-    //  updateBounds();                 //update bounds if at least 1 cycle has been read
-    //  counter = 0;                    //reset counter
-    //}
-
-    //oldPulseCount = pulsecount;              //update old total
+    SendPulseCount = pulsecount;
   }
 }
 
