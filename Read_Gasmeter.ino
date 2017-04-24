@@ -59,6 +59,9 @@ int increment = 0;                      //space b/w dividers
 int pulsecounter = 0;
 //int topAddr = 0;                        //address of TOP in FRAM
 //int bottomAddr = topAddr + 2;           //address of BOTTOM in FRAM
+const int RunningAverageCount = 5;
+float RunningAverageBuffer[RunningAverageCount];
+int NextRunningAverage;
 
 MyMessage flowMsg(CHILD_ID,V_FLOW);
 MyMessage volumeMsg(CHILD_ID,V_VOLUME);
@@ -82,12 +85,12 @@ void setup(){
   Wire.write(0x00); //continuous measurement mode
   Wire.endTransmission();
 
-  newTop = 565;
-  newBottom = -302;
-  updateBounds();
+  //newTop = 565;
+  //newBottom = -302;
+  //updateBounds();
   
   //WARNING: IT IS PREFERABLE THAT GAS IS RUNNING ON FIRST RUNNING OF THIS PROGRAM!!!
-  //init_top_bottom();
+  init_top_bottom();
   y = readMag();
   oldy=y;
   oldrising = false;
@@ -122,6 +125,7 @@ void loop(){
       oldPulseCount = pulsecount;
       pulsecounter = 0;
     }
+    lastSend = millis();
     //send updated cumulative pulse count and volume data, if necessary
   //  Pulse_Volume();
   }
@@ -179,22 +183,25 @@ int readMag(){
     z |= Wire.read(); //Z lsb
     y = Wire.read()<<8; //Y msb
     y |= Wire.read(); //Y lsb
+    Serial.print("WITHIN THE READMAG LOOP RAW Y: ");
+    Serial.print(y);
   }
-  Serial.print("WITHIN THE READMAG LOOP RAW Y: ");
-  Serial.print(y);
-  if (spike_y == 999) {
-    Serial.println("First run spike_value is still 999");
-    spike_y = y; // For the first run set value for Spike_Y
+  //if (spike_y == 999) {
+  //  Serial.println("First run spike_value is still 999");
+  //  spike_y = y; // For the first run set value for Spike_Y
     //ADCFilter.SetCurrent();
-  }
+  //}
 
-  if (abs(y - spike_y) >= 100) { // The step for the new value is to big compared to previous measurement. Discard this measurement
-    Serial.print("WITHIN THE READMAG LOOP HI VALUE Y DETECTED COMPARED TO Y-SPIKE ");
-    Serial.println(y - spike_y);
-    y = spike_y;
-  } else {
-    spike_y = y; // The value is within bounds. Reset Spike_y to current value
-  }
+  //if (abs(y - spike_y) >= 200) { // The step for the new value is to big compared to previous measurement. Discard this measurement
+  //  Serial.print("WITHIN THE READMAG LOOP HI VALUE Y DETECTED COMPARED TO Y-SPIKE ");
+  //  Serial.println(y - spike_y);
+  //  y = spike_y;
+  //} else {
+  //  spike_y = y; // The value is within bounds. Reset Spike_y to current value
+  //}
+    
+    y = Runningaverage(y);
+    
     Serial.print (" THE LOOP THE RETURNED Y: ");
     Serial.println (y);
   return y;
@@ -210,7 +217,7 @@ void init_top_bottom (){
   int i = 0;
   int changes = 0;
    while(abs(y - oldy) < 15){  // Wait until difference b/w y and oldy is greater than the initstep size
-     delay(1000);
+     //delay(100);
      y = readMag();
 //     Serial.print ("WITHIN THE INIT LOOP DETECTING RISING OR FALLING Y: ");
 //     Serial.print (y);
@@ -391,5 +398,22 @@ void Pulse_Volume(){
     send(volumeMsg.set(volume, 3));
     SendPulseCount = pulsecount;
   }
+}
+
+int Runningaverage(int y_measurement)
+{
+    RunningAverageBuffer[NextRunningAverage++] = y_measurement;
+  if (NextRunningAverage >= RunningAverageCount)
+  {
+    NextRunningAverage = 0; 
+  }
+  float Running_Y = 0;
+  for(int i=0; i< RunningAverageCount; ++i)
+  {
+    Running_Y += RunningAverageBuffer[i];
+  }
+  Running_Y /= RunningAverageCount;
+ 
+  return Running_Y;
 }
 
