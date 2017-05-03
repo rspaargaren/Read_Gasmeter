@@ -1,10 +1,7 @@
-/*This version is different in several ways.
-   first is is using some memory (Adafruit I2C FRAM) memory to store the top and bottom. This is used to keep the top and bottom
-   values after a restart. I guess we could have put them on the controller but can't remember why we didn't.
-   second it will only calculate the top and bottom if the values are not in memory.
-   third it auto calculates the top and bottom values as it is running.
-   the only settings that should be changed are vpp, SEND_FREQUENCY, and metric. However I am currently using
-   Domoticz as my controller and it doesn't seem to accept English units well so for not I'm using Metric.
+/*
+Based on the original version as posted by by Sean Creel <creels15@gmail.com>
+on mysenson forum.
+Version to be cleaned from debug lines but working version.
 */
 
 #define MY_DEBUG
